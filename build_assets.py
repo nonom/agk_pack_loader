@@ -105,7 +105,7 @@ def create_asset_pack(source_dir, output_file):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Asset packer for AppGameKit",
-        epilog="Example: python build_assets.py media assets.pak"
+        epilog="Example: python build_assets.py media nedia/assets.pak"
     )
     parser.add_argument("source", help="Source directory (e.g., media)")
     parser.add_argument("output", help="Output .pak file (e.g., assets.pak)")
