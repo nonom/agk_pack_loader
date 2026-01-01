@@ -1,7 +1,7 @@
 /**
  * File: pack_loader.agc
  * Author: nonom
- * Description: Asset loader for encrypted .pak files
+ * Description: Asset loader for XOR-obfuscated .pak files
  * Created: 2025-12-26
  *
  * Generate assets.pak using: python.exe build_assets.py media media/assets.pak
@@ -9,11 +9,17 @@
  * USAGE:
  *   1. #include "src/pack_loader.agc"
  *   2. Call Pack_Init("assets.pak") at startup
- *   3. Use Pack_LoadImage(), Pack_LoadJSON(), etc.
+ *   3. Use:
+ *        - Pack_LoadImage()
+ *        - Pack_LoadSound()
+ *        - Pack_LoadMusic()
+ *        - Pack_LoadText()
+ *        - Pack_LoadBytes()
  *   4. Call Pack_Close() before exit
  */
 
-// Must match build_assets.py
+// Key must be exactly 32 characters and match build_assets.py
+// Avoid obvious/plain strings.
 #constant PACK_KEY_STRING "my-secret-game-key-32-bytes!!!!!"
 
 /**
@@ -34,7 +40,7 @@ global g_KeyMemblock as integer = 0
 
 /**
  * Pack_Init
- * Opens the .pak file and reads the manifest.
+ * Opens the pack file and parses the file table.
  */
 function Pack_Init(filePath as string)
     local i as integer
@@ -42,7 +48,7 @@ function Pack_Init(filePath as string)
 
     // Validate key length
     if len(PACK_KEY_STRING) <> 32
-        Message("Pack Error: Key must be exactly 32 bytes!")
+        // Key must be exactly 32 bytes.
         exitfunction
     endif
 
@@ -54,7 +60,7 @@ function Pack_Init(filePath as string)
 
     // Open .pak file
     if GetFileExists(filePath) = 0
-        Message("Pack Error: File not found: " + filePath)
+        // File not found.
         exitfunction
     endif
 
@@ -64,7 +70,7 @@ function Pack_Init(filePath as string)
     fileCount = ReadInteger(g_PackFileID)
     
     if fileCount < 0 or fileCount > 100000
-        Message("Pack Error: Invalid manifest")
+        // Invalid manifest.
         exitfunction
     endif
 
@@ -112,7 +118,7 @@ endfunction
 
 /**
  * Pack_LoadImage
- * Loads an image from the .pak file.
+ * Loads an image from the pack. Returns Image ID.
  */
 function Pack_LoadImage(virtualPath as string)
     local index as integer
@@ -135,7 +141,7 @@ function Pack_LoadImage(virtualPath as string)
     next i
     
     if index = -1
-        Message("Pack Error: Image not found: " + virtualPath)
+        // Image not found.
         exitfunction 0
     endif
     
@@ -160,16 +166,14 @@ function Pack_LoadImage(virtualPath as string)
         imgID = CreateImageFromMemblock(mem)
     endif
     
-    if imgID = 0 then Message("Pack Error: Failed to load image from memblock.")
-
     DeleteMemblock(mem)
 endfunction imgID
 
 /**
- * Pack_LoadJSON
- * Loads a JSON/text file from the .pak file.
+ * Pack_LoadText
+ * Loads a text file from the pack. Returns the content as a string.
  */
-function Pack_LoadJSON(virtualPath as string)
+function Pack_LoadText(virtualPath as string)
     local index as integer
     local i as integer
     local mem as integer
@@ -187,7 +191,7 @@ function Pack_LoadJSON(virtualPath as string)
     next i
     
     if index = -1
-        Message("Pack Error: JSON not found: " + virtualPath)
+        // Text not found.
         exitfunction ""
     endif
     
@@ -205,10 +209,8 @@ function Pack_LoadJSON(virtualPath as string)
     
     // Skip BOM if present (EF BB BF)
     startOffset = 0
-    if length >= 3
-        if GetMemblockByte(mem, 0) = 239 and GetMemblockByte(mem, 1) = 187 and GetMemblockByte(mem, 2) = 191
-            startOffset = 3
-        endif
+    if length >= 3 and GetMemblockByte(mem, 0) = 239 and GetMemblockByte(mem, 1) = 187 and GetMemblockByte(mem, 2) = 191
+        startOffset = 3
     endif
     
     result = GetMemblockString(mem, startOffset, length - startOffset)
@@ -216,20 +218,17 @@ function Pack_LoadJSON(virtualPath as string)
 endfunction result
 
 /**
- * Pack_LoadSound
- * Loads a sound from the .pak file.
+ * Pack_LoadBytes
+ * Loads raw bytes from the pack. Returns a memblock ID (caller deletes).
  */
-function Pack_LoadSound(virtualPath as string)
+function Pack_LoadBytes(virtualPath as string)
     local index as integer
     local i as integer
     local mem as integer
-    local soundID as integer
     local offset as integer
     local length as integer
-    local tempFile as string
-    local fOut as integer
-    local k as integer
-    local ext as string
+    local paddedSize as integer
+    local memData as integer
 
     index = -1
     for i = 0 to g_AssetManifest.length
@@ -240,13 +239,12 @@ function Pack_LoadSound(virtualPath as string)
     next i
     
     if index = -1
-        Message("Pack Error: Sound not found: " + virtualPath)
+        // Bytes not found.
         exitfunction 0
     endif
     
     offset = g_AssetManifest[index].offset
     length = g_AssetManifest[index].length
-    local paddedSize as integer
     paddedSize = (length + 3) / 4 * 4
     
     SetFilePos(g_PackFileID, g_PackDataStart + offset)
@@ -255,47 +253,151 @@ function Pack_LoadSound(virtualPath as string)
     Pack_ReadToMemblock(g_PackFileID, mem, paddedSize)
     Pack_DecryptMemblock(mem, paddedSize)
     
-    // Get extension
-    ext = ".ogg"
-    for k = Len(virtualPath) to 1 step -1
-        if Mid(virtualPath, k, 1) = "."
-            ext = Lower(Right(virtualPath, Len(virtualPath) - k + 1))
+    memData = CreateMemblock(length)
+    for i = 0 to length - 1
+        SetMemblockByte(memData, i, GetMemblockByte(mem, i))
+    next i
+    
+    DeleteMemblock(mem)
+endfunction memData
+
+/**
+ * Pack_LoadSound
+ * Loads a sound (WAV/OGG) from the pack. Returns Sound ID.
+ */
+function Pack_LoadSound(virtualPath as string)
+    local index as integer
+    local i as integer
+    local mem as integer
+    local soundID as integer
+    local offset as integer
+    local length as integer
+    local paddedSize as integer
+    local memData as integer
+    local magic0 as integer
+    local magic1 as integer
+    local magic2 as integer
+    local magic3 as integer
+    local isOgg as integer
+
+    index = -1
+    for i = 0 to g_AssetManifest.length
+        if g_AssetManifest[i].path = virtualPath
+            index = i
             exit
         endif
-    next k
-
-    // Write temp file and load
-    tempFile = "tmp_snd_" + Str(GetMilliseconds()) + ext
-    fOut = OpenToWrite(tempFile)
-    for k = 0 to length - 1
-        WriteByte(fOut, GetMemblockByte(mem, k))
-    next k
-    CloseFile(fOut)
+    next i
     
-    if ext = ".ogg"
-        soundID = LoadSoundOGG(tempFile)
-    else
-        soundID = LoadSound(tempFile)
+    if index = -1
+        // Sound not found.
+        exitfunction 0
     endif
     
-    DeleteFile(tempFile)
+    offset = g_AssetManifest[index].offset
+    length = g_AssetManifest[index].length
+    paddedSize = (length + 3) / 4 * 4
+    
+    SetFilePos(g_PackFileID, g_PackDataStart + offset)
+    
+    mem = CreateMemblock(paddedSize)
+    Pack_ReadToMemblock(g_PackFileID, mem, paddedSize)
+    Pack_DecryptMemblock(mem, paddedSize)
+    
+    memData = CreateMemblock(length)
+    for i = 0 to length - 1
+        SetMemblockByte(memData, i, GetMemblockByte(mem, i))
+    next i
     DeleteMemblock(mem)
+    
+    // Detect format by magic
+    magic0 = GetMemblockByte(memData, 0)
+    magic1 = GetMemblockByte(memData, 1)
+    magic2 = GetMemblockByte(memData, 2)
+    magic3 = GetMemblockByte(memData, 3)
+    
+    isOgg = 0
+    if magic0 = 79 and magic1 = 103 and magic2 = 103 and magic3 = 83
+        isOgg = 1 // "OggS"
+    endif
+    
+    if isOgg = 1
+        soundID = CreateSoundFromOGGMemblock(memData)
+    else
+        soundID = CreateSoundFromMemblock(memData)
+    endif
+    
+    DeleteMemblock(memData)
 endfunction soundID
 
 /**
- * Pack_Close
- * Closes the .pak file. Call before exiting.
+ * Pack_LoadMusic
+ * Loads music/streaming OGG (or sound fallback) from the pack. Returns Music/Sound ID.
  */
-function Pack_Close()
-    if g_PackFileID > 0
-        CloseFile(g_PackFileID)
-        g_PackFileID = 0
+function Pack_LoadMusic(virtualPath as string)
+    local index as integer
+    local i as integer
+    local mem as integer
+    local musicID as integer
+    local offset as integer
+    local length as integer
+    local paddedSize as integer
+    local memData as integer
+    local magic0 as integer
+    local magic1 as integer
+    local magic2 as integer
+    local magic3 as integer
+    local isOgg as integer
+
+    index = -1
+    for i = 0 to g_AssetManifest.length
+        if g_AssetManifest[i].path = virtualPath
+            index = i
+            exit
+        endif
+    next i
+    
+    if index = -1
+        // Music not found.
+        exitfunction 0
     endif
-    if g_KeyMemblock > 0
-        DeleteMemblock(g_KeyMemblock)
-        g_KeyMemblock = 0
+    
+    offset = g_AssetManifest[index].offset
+    length = g_AssetManifest[index].length
+    paddedSize = (length + 3) / 4 * 4
+    
+    SetFilePos(g_PackFileID, g_PackDataStart + offset)
+    
+    mem = CreateMemblock(paddedSize)
+    Pack_ReadToMemblock(g_PackFileID, mem, paddedSize)
+    Pack_DecryptMemblock(mem, paddedSize)
+    
+    memData = CreateMemblock(length)
+    for i = 0 to length - 1
+        SetMemblockByte(memData, i, GetMemblockByte(mem, i))
+    next i
+    DeleteMemblock(mem)
+    
+    magic0 = GetMemblockByte(memData, 0)
+    magic1 = GetMemblockByte(memData, 1)
+    magic2 = GetMemblockByte(memData, 2)
+    magic3 = GetMemblockByte(memData, 3)
+    
+    isOgg = 0
+    if magic0 = 79 and magic1 = 103 and magic2 = 103 and magic3 = 83
+        isOgg = 1
     endif
-endfunction
+    
+    if isOgg = 1
+        musicID = CreateMusicFromOGGMemblock(memData)
+        if musicID = 0
+            musicID = CreateSoundFromOGGMemblock(memData)
+        endif
+    else
+        musicID = CreateSoundFromMemblock(memData)
+    endif
+    
+    DeleteMemblock(memData)
+endfunction musicID
 
 /**
  * Pack_ReadString
@@ -318,3 +420,18 @@ function Pack_ReadString(fileID as integer)
         DeleteMemblock(mem) 
     endif
 endfunction resultStr
+
+/**
+ * Pack_Close
+ * Closes the pack file and releases the key memblock.
+ */
+function Pack_Close()
+    if g_PackFileID > 0
+        CloseFile(g_PackFileID)
+        g_PackFileID = 0
+    endif
+    if g_KeyMemblock > 0
+        DeleteMemblock(g_KeyMemblock)
+        g_KeyMemblock = 0
+    endif
+endfunction

@@ -3,7 +3,7 @@
  * Description: Example project using Pack Loader
  * Created: 2025-12-27
  * 
- * This demonstrates loading images, JSON, and sounds from a XOR encrypted .pak file.
+ * This demonstrates loading images, text, and sounds from an XOR-obfuscated .pak file.
  * 
  * BUILD INSTRUCTIONS:
  *   1. Run: "python build_assets.py media media/assets.pak"
@@ -17,7 +17,7 @@
 // Include the pack loader
 #include "src/pack_loader.agc"
 
-// Configuration: 
+// Configuration:
 // Set to 1 for packed mode
 #constant USE_PACK 1
 
@@ -25,20 +25,30 @@
 global logoImg as integer
 global appConfig as AppConfigType
 global clickSnd as integer
+global blobMb as integer
+global blobSize as integer
 
 if USE_PACK
 	// Initialize pack loader
 	Pack_Init("assets.pak")
     
-    // Load from encrypted pack
+    // Load from assets.pak
     logoImg = Pack_LoadImage("img/logo.png")
-    appConfig.fromJSON(Pack_LoadJSON("data/config.json"))
+    appConfig.fromJSON(Pack_LoadText("data/config.json"))
     clickSnd = Pack_LoadSound("sfx/click.ogg")
+    blobMb = Pack_LoadBytes("data/config.json")
+    if blobMb > 0
+        blobSize = GetMemblockSize(blobMb)
+    endif
 else
-	// Without PAK as usual
+	// Without PAK, as usual
     logoImg = LoadImage("img/logo.png")
     appConfig.fromJSON(Load_JSON("data/config.json"))
     clickSnd = LoadSoundOGG("sfx/click.ogg")
+    blobMb = CreateMemblockFromFile("data/config.json")
+    if blobMb > 0
+        blobSize = GetMemblockSize(blobMb)
+    endif
 endif
 
 
@@ -74,6 +84,8 @@ do
     Print(" debug.showFps: " + Str(appConfig.debug.showFps))
     Print(" debug.logLevel: " + appConfig.debug.logLevel)
     Print("")
+    Print(" Text memblock size: " + Str(blobSize))
+    Print("")
     Print("Click or Touch to play sound")
     Print("Press ESC to exit")
     
@@ -89,5 +101,6 @@ do
 loop
 
 // Cleanup
+if blobMb > 0 then DeleteMemblock(blobMb)
 if USE_PACK = 1 then Pack_Close()
 end

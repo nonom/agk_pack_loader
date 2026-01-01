@@ -1,13 +1,13 @@
 # AGK Pack Loader
 
-A high-performance, encrypted asset loading system for AppGameKit (AGK). This tool allows you to package your game assets into a single obfuscated file and load them directly from memory, improving security and load times.
+A high-performance, XOR-obfuscated asset loading system for AppGameKit (AGK). This tool allows you to package your game assets into a single obfuscated file and load them directly from memory, improving resistance to casual extraction and load times.
 
 ## Key Features
 
-*   **XOR Encryption**: Basic obfuscation to protect assets from casual extraction.
-*   **Vectorized Loading**: Optimized 4-byte integer reading and decryption for maximum performance in AGK Tier 1.
-*   **Direct Memory Loading**: Images and sounds are loaded directly from memory (RAM) without writing temporary files to disk, reducing I/O overhead.
-*   **4-Byte Alignment**: Assets are automatically padded to ensure high-speed integer-aligned CPU access.
+- **XOR Obfuscation**: Basic protection to deter casual extraction.
+- **Vectorized Loading**: Optimized 4-byte integer reading and decryption for maximum performance in AGK Tier 1.
+- **Direct Memory Loading**: Assets stream from memblocks straight into AGK IDs, minimizing disk I/O.
+- **4-Byte Alignment**: Assets are automatically padded to ensure high-speed integer-aligned CPU access.
 
 ## 1. Packing Assets
 
@@ -24,7 +24,7 @@ python build_assets.py media media/assets.pak
 ```
 *   This scans the `media` folder.
 *   Aligns all files to 4-byte boundaries (adding padding if necessary).
-*   Encrypts the data using the key defined in the script.
+*   XOR-obfuscates the data using the key defined in the script.
 *   Generates `media/assets.pak`.
 
 > **Note:** Ensure the `XOR_KEY` in `build_assets.py` matches the one in `src/pack_loader.agc`.
@@ -52,7 +52,7 @@ endif
 ```
 
 ### Loading Images
-Loads an image directly from the pack into an AGK Image ID. Support includes PNG and JPG.
+Loads an image from the pack into an AGK Image ID (PNG/JPG).
 
 ```agc
 global playerImg as integer
@@ -67,7 +67,7 @@ endif
 ```
 
 ### Loading Sounds
-Loads a sound effect file (e.g., .wav, .ogg).
+Loads a sound from the pack into an AGK Sound ID (WAV/OGG).
 
 ```agc
 global clickSnd as integer
@@ -82,14 +82,29 @@ endif
 PlaySound(clickSnd)
 ```
 
-### Loading JSON / Text
-Reads a text file from the pack and returns it as a string. Useful for configuration or level data.
+### Loading Music
+Loads streaming music from the pack into an AGK Music/Sound ID (OGG preferred).
+
+```agc
+global musicID as integer
+
+if USE_PACK
+    musicID = Pack_LoadMusic("music/theme.ogg")
+else
+    musicID = LoadMusicOGG("music/theme.ogg")
+endif
+
+PlayMusic(musicID, 1) // loop
+```
+
+### Loading Text
+Reads a text file from the pack and returns it as a string (config, shaders, levels).
 
 ```agc
 local jsonContent as string
 
 if USE_PACK
-    jsonContent = Pack_LoadJSON("data/config.json")
+    jsonContent = Pack_LoadText("data/config.json")
 else
     // Use helper for loose files (reads entire file to string)
     jsonContent = Load_JSON("data/config.json")
@@ -99,6 +114,20 @@ endif
 myConfig.fromJSON(jsonContent)
 ```
 
+### Loading Binary
+Gets a memblock with the exact bytes from the pack; caller deletes it.
+
+```agc
+local bytesID as integer
+bytesID = Pack_LoadBytes("data/blob.bin")
+
+if bytesID > 0
+    // Read or pass the memblock to your parser
+    // ...
+    DeleteMemblock(bytesID)
+endif
+```
+
 ### Cleanup
 Close the pack file when the application terminates to free file handles and memory.
 
@@ -106,12 +135,32 @@ Close the pack file when the application terminates to free file handles and mem
 Pack_Close()
 ```
 
+## Usage
+
+1. Ensure Python 3 is installed and available as `python` or `python3` in your PATH (only needed to build assets).
+2. Build the pack:
+   ```bash
+   python build_assets.py media media/assets.pak
+   ```
+3. In your AGK project:
+   - `#include "src/pack_loader.agc"`
+   - Call `Pack_Init("assets.pak")` at startup.
+   - Use the loader functions as needed:
+     - `Pack_LoadImage()`
+     - `Pack_LoadSound()`
+     - `Pack_LoadMusic()`
+     - `Pack_LoadText()`
+     - `Pack_LoadBytes()`
+   - Call `Pack_Close()` on shutdown.
+
 ## API Reference
 
 | Function | Return | Description |
 | :--- | :--- | :--- |
-| `Pack_Init(path)` | `void` | Opens the pack file and parses the file table. |
-| `Pack_LoadImage(path)` | `integer` | Decrypts and creates an image from memory. Returns Image ID. |
-| `Pack_LoadSound(path)` | `integer` | Decrypts and loads a sound. Returns Sound ID. |
-| `Pack_LoadJSON(path)` | `string` | Decrypts and returns the file content as a string. |
-| `Pack_Close()` | `void` | Closes the pack file and releases the encryption key memblock. |
+| `Pack_Init(filePath)` | `void` | Opens the pack file and parses the file table. |
+| `Pack_LoadImage(virtualPath)` | `integer` | Loads an image from the pack. Returns Image ID. |
+| `Pack_LoadSound(virtualPath)` | `integer` | Loads a sound (WAV/OGG) from the pack. Returns Sound ID. |
+| `Pack_LoadMusic(virtualPath)` | `integer` | Loads music/streaming OGG (or sound fallback) from the pack. Returns Music/Sound ID. |
+| `Pack_LoadText(virtualPath)` | `string` | Loads a text file from the pack. Returns the content as a string. |
+| `Pack_LoadBytes(virtualPath)` | `integer` | Loads raw bytes from the pack. Returns a memblock ID (caller deletes). |
+| `Pack_Close()` | `void` | Closes the pack file and releases the key memblock. |
