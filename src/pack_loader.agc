@@ -127,9 +127,6 @@ function Pack_LoadImage(virtualPath as string)
     local imgID as integer
     local offset as integer
     local length as integer
-    local tempFile as string
-    local fOut as integer
-    local k as integer
 
     // Find in manifest
     index = -1
